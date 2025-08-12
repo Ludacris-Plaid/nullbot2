@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "PUT-YOUR-TOKEN-HERE"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
 BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")
 
 # Sample digital items
