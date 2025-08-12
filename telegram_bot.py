@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-TELEGRAM_TOKEN = "7613184845:AAGXsr2dnUqwfENvGcXx08KEwoFcmeTlKxs"
+TELEGRAM_TOKEN = "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
 BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")  # Your Blockonomics API key from .env
 
 # Sample digital items (replace paths with your actual files)
