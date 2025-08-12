@@ -5,38 +5,33 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 TELEGRAM_TOKEN = "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
 BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")
 
-# Hosted video URL (direct .mp4 link)
 VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=1754980438031"
 
-# Categories mapping to item keys
+# Define categories with item keys
 CATEGORIES = {
-    "files": ["item1", "item2"],
-    "archives": ["item2"],
+    "cards": ["item1"],
+    "tutorials": ["item2"],
+    "pages": []  # empty category example, you can add item keys here
 }
 
-# Items data
 ITEMS = {
-    "item1": {"name": "Dark Secret File", "price_btc": 0.0001, "file_path": "items/secret.pdf"},
-    "item2": {"name": "Forbidden Archive", "price_btc": 0.0002, "file_path": "items/archive.zip"}
+    "item1": {"name": "Dark Secret Card", "price_btc": 0.0001, "file_path": "items/secret.pdf"},
+    "item2": {"name": "Forbidden Tutorial", "price_btc": 0.0002, "file_path": "items/archive.zip"},
 }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await update.message.reply_video(
-            video=VIDEO_URL,
-            caption="Welcome to the dark side, fucker."
-        )
+        await update.message.reply_video(video=VIDEO_URL, caption="Welcome to the dark side, fucker.")
     except Exception as e:
         await update.message.reply_text(f"Error sending video: {e}")
 
     keyboard = [
-        [InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat_key}")]
-        for cat_key in CATEGORIES.keys()
+        [InlineKeyboardButton(name.title(), callback_data=f"cat_{key}")]
+        for key, name in zip(CATEGORIES.keys(), ["Cards", "Tutorials", "Pages"])
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Choose a category:", reply_markup=reply_markup)
@@ -51,7 +46,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items_in_cat = CATEGORIES.get(cat_key, [])
 
         if not items_in_cat:
-            await query.message.edit_text("Nothing here, asshole.")
+            await query.message.edit_text(f"No items found in {cat_key.title()}, asshole.")
             return
 
         keyboard = [
@@ -65,8 +60,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "back_to_categories":
         keyboard = [
-            [InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat_key}")]
-            for cat_key in CATEGORIES.keys()
+            [InlineKeyboardButton(name.title(), callback_data=f"cat_{key}")]
+            for key, name in zip(CATEGORIES.keys(), ["Cards", "Tutorials", "Pages"])
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text("Choose a category:", reply_markup=reply_markup)
