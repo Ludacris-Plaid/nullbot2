@@ -15,7 +15,7 @@ VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=17549804
 CATEGORIES = {
     "cards": ["item1"],
     "tutorials": ["item2"],
-    "pages": []  # empty category example, you can add item keys here
+    "pages": []  # empty category for now
 }
 
 ITEMS = {
