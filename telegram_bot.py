@@ -3,7 +3,7 @@ import json
 import asyncio
 import requests
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes,
@@ -17,10 +17,30 @@ BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")
 
 VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=1754980438031"
 
-ADMIN_USER_ID = 7260656020  # Only this user can access admin
+ADMIN_USER_ID = 7260656020  # Your admin Telegram user ID
 
 CATEGORIES_FILE = "categories.json"
 ITEMS_FILE = "items.json"
+
+(
+    ADMIN_MENU,
+    CATEGORY_MENU,
+    CATEGORY_ADD_NAME,
+    CATEGORY_EDIT_SELECT,
+    CATEGORY_EDIT_NAME,
+    CATEGORY_DELETE_CONFIRM,
+
+    ITEM_MENU,
+    ITEM_ADD_KEY,
+    ITEM_ADD_NAME,
+    ITEM_ADD_PRICE,
+    ITEM_ADD_PATH,
+    ITEM_ADD_CATEGORY,
+    ITEM_EDIT_SELECT,
+    ITEM_EDIT_FIELD_SELECT,
+    ITEM_EDIT_FIELD_VALUE,
+    ITEM_DELETE_CONFIRM,
+) = range(17)
 
 def load_json(filepath, default):
     if os.path.exists(filepath):
@@ -33,7 +53,6 @@ def save_json(filepath, data):
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
 
-# Load or initialize data
 CATEGORIES = load_json(CATEGORIES_FILE, {
     "cards": ["item1", "item3", "item7"],
     "tutorials": ["item2", "item5", "item6", "item9"],
@@ -53,25 +72,7 @@ ITEMS = load_json(ITEMS_FILE, {
     "item10": {"name": "Black Market Blueprints", "price_btc": 0.0006, "file_path": "items/blueprints.pdf"},
 })
 
-# Conversation states for admin
-(
-    ADMIN_MENU,
-    CATEGORY_MENU,
-    ADD_CATEGORY,
-    EDIT_CATEGORY_SELECT,
-    EDIT_CATEGORY_NEW_NAME,
-    ITEM_MENU,
-    ADD_ITEM_WAITING_KEY,
-    ADD_ITEM_WAITING_NAME,
-    ADD_ITEM_WAITING_PRICE,
-    ADD_ITEM_WAITING_PATH,
-    ADD_ITEM_WAITING_CATEGORY,
-    EDIT_ITEM_SELECT,
-    EDIT_ITEM_FIELD,
-    EDIT_ITEM_NEW_VALUE,
-) = range(14)
-
-def is_admin(update: Update) -> bool:
+def is_admin(update: Update):
     user = update.effective_user
     return user and user.id == ADMIN_USER_ID
 
@@ -93,6 +94,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    print(f"[DEBUG] Callback data received: {data}")
+
     if data.startswith("cat_"):
         cat_key = data[4:]
         items_in_cat = CATEGORIES.get(cat_key, [])
@@ -103,7 +106,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = [
             [InlineKeyboardButton(ITEMS[item_key]["name"], callback_data=item_key)]
-            for item_key in items_in_cat
+            for item_key in items_in_cat if item_key in ITEMS
         ]
         keyboard.append([InlineKeyboardButton("⬅️ Back to categories", callback_data="back_to_categories")])
 
@@ -118,10 +121,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text("Choose a category:", reply_markup=reply_markup)
 
+    elif data.startswith("admin_"):
+        # Pass to admin handler
+        await admin_callback_handler(update, context)
+
     else:
+        # Assume item key
         item_key = data
         item = ITEMS.get(item_key)
-
         if not item:
             await query.message.reply_text("Item’s gone, asshole. Pick something else.")
             return
@@ -131,8 +138,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = requests.post('https://www.blockonomics.co/api/new_address', headers=headers)
             response.raise_for_status()
             btc_address = response.json()['address']
+            print(f"[DEBUG] BTC Address generated: {btc_address}")
         except Exception as e:
-            await update.message.reply_text(f"Failed to get BTC address: {str(e)}. Try again, dipshit.")
+            await query.message.reply_text(f"Failed to get BTC address: {str(e)}. Try again, dipshit.")
             return
 
         context.user_data['pending_payment'] = {
@@ -175,7 +183,7 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 with open(item['file_path'], 'rb') as file:
                     await update.message.reply_document(
-                        document=file,
+                        document=InputFile(file),
                         caption=f"Here's your {item['name']}. Enjoy, you sick fuck."
                     )
                 del context.user_data['pending_payment']
@@ -186,7 +194,7 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Payment check failed: {str(e)}. Try again, dumbass.")
 
-# --------------- ADMIN UI -------------------
+# -------------- Admin handlers --------------
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -202,230 +210,325 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Admin menu:", reply_markup=reply_markup)
     return ADMIN_MENU
 
-async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
     if data == "admin_manage_categories":
-        # List categories with options to add or edit
-        keyboard = [
-            [InlineKeyboardButton(name.title(), callback_data=f"edit_cat_{key}")]
-            for key, name in zip(CATEGORIES.keys(), ["Cards", "Tutorials", "Pages"])
-        ]
-        keyboard.append([InlineKeyboardButton("Add New Category", callback_data="add_category")])
-        keyboard.append([InlineKeyboardButton("Back to Admin Menu", callback_data="admin_back")])
-        await query.message.edit_text("Categories:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return CATEGORY_MENU
+        return await admin_show_categories(update, context)
 
     elif data == "admin_manage_items":
-        # List items with edit option
-        keyboard = [
-            [InlineKeyboardButton(item['name'], callback_data=f"edit_item_{key}")]
-            for key, item in ITEMS.items()
-        ]
-        keyboard.append([InlineKeyboardButton("Add New Item", callback_data="add_item")])
-        keyboard.append([InlineKeyboardButton("Back to Admin Menu", callback_data="admin_back")])
-        await query.message.edit_text("Items:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return ITEM_MENU
+        return await admin_show_items(update, context)
 
     elif data == "admin_exit":
         await query.message.edit_text("Exiting admin mode.")
         return ConversationHandler.END
 
-    elif data == "admin_back":
+    elif data == "admin_back_to_menu":
+        return await admin_start(update, context)
+
+    # CATEGORY management
+    elif data == "add_category":
+        await query.message.edit_text("Send me the *name* of the new category (lowercase, no spaces).", parse_mode="Markdown")
+        return CATEGORY_ADD_NAME
+
+    elif data.startswith("edit_cat_"):
+        cat_key = data[len("edit_cat_"):]
+        context.user_data['edit_cat_key'] = cat_key
+        await query.message.edit_text(
+            f"Editing category *{cat_key}*\n"
+            "Send me the new name (lowercase, no spaces), or /cancel.",
+            parse_mode="Markdown"
+        )
+        return CATEGORY_EDIT_NAME
+
+    elif data.startswith("delete_cat_"):
+        cat_key = data[len("delete_cat_"):]
+        context.user_data['del_cat_key'] = cat_key
+        keyboard = [
+            [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_cat")],
+            [InlineKeyboardButton("No, go back", callback_data="admin_manage_categories")]
+        ]
+        await query.message.edit_text(f"Are you sure you want to delete category *{cat_key}*? All items in it will be orphaned.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return CATEGORY_DELETE_CONFIRM
+
+    elif data == "confirm_delete_cat":
+        cat_key = context.user_data.get('del_cat_key')
+        if cat_key and cat_key in CATEGORIES:
+            del CATEGORIES[cat_key]
+            save_json(CATEGORIES_FILE, CATEGORIES)
+            # Orphan items remain, you may want to clean them manually or prompt admin later
+            await query.message.edit_text(f"Category *{cat_key}* deleted.", parse_mode="Markdown")
+        else:
+            await query.message.edit_text("No category selected or category does not exist.")
+        return await admin_show_categories(update, context)
+
+    # ITEM management
+    elif data == "add_item":
+        await query.message.edit_text("Send me the new item *key* (unique id, no spaces).", parse_mode="Markdown")
+        return ITEM_ADD_KEY
+
+    elif data.startswith("edit_item_"):
+        item_key = data[len("edit_item_"):]
+        if item_key not in ITEMS:
+            await query.message.edit_text("Item not found.")
+            return await admin_show_items(update, context)
+        context.user_data['edit_item_key'] = item_key
+        return await admin_edit_item_menu(update, context, item_key)
+
+    elif data.startswith("delete_item_"):
+        item_key = data[len("delete_item_"):]
+        context.user_data['del_item_key'] = item_key
+        keyboard = [
+            [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_item")],
+            [InlineKeyboardButton("No, go back", callback_data="admin_manage_items")]
+        ]
+        await query.message.edit_text(f"Are you sure you want to delete item *{item_key}*?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return ITEM_DELETE_CONFIRM
+
+    elif data == "confirm_delete_item":
+        item_key = context.user_data.get('del_item_key')
+        if item_key and item_key in ITEMS:
+            del ITEMS[item_key]
+            # Also remove from categories
+            for cat, items in CATEGORIES.items():
+                if item_key in items:
+                    items.remove(item_key)
+            save_json(ITEMS_FILE, ITEMS)
+            save_json(CATEGORIES_FILE, CATEGORIES)
+            await query.message.edit_text(f"Item *{item_key}* deleted.", parse_mode="Markdown")
+        else:
+            await query.message.edit_text("No item selected or item does not exist.")
+        return await admin_show_items(update, context)
+
+    # ITEM EDIT FIELDS
+    elif data.startswith("edit_field_"):
+        field = data[len("edit_field_"):]
+        context.user_data['edit_item_field'] = field
+        await query.message.edit_text(f"Send me the new value for *{field}*, or /cancel.", parse_mode="Markdown")
+        return ITEM_EDIT_FIELD_VALUE
+
+    # BACK buttons
+    elif data == "back_to_categories":
+        return await admin_show_categories(update, context)
+    elif data == "back_to_items":
+        return await admin_show_items(update, context)
+    elif data == "back_to_admin":
         return await admin_start(update, context)
 
     return ADMIN_MENU
 
-# --- Category add/edit ---
-
-async def category_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "add_category":
-        await query.message.edit_text("Send me the new category key (lowercase, no spaces):")
-        return ADD_CATEGORY
-
-    elif data.startswith("edit_cat_"):
-        cat_key = data[9:]
-        context.user_data['edit_cat_key'] = cat_key
-        await query.message.edit_text(f"Send me the new name for category '{cat_key}':")
-        return EDIT_CATEGORY_NEW_NAME
-
-    elif data == "admin_back":
-        return await admin_start(update, context)
-
+    keyboard = [
+        [InlineKeyboardButton(f"{name.title()} ✏️", callback_data=f"edit_cat_{key}"),
+         InlineKeyboardButton("🗑️", callback_data=f"delete_cat_{key}")]
+        for key, name in zip(CATEGORIES.keys(), CATEGORIES.keys())
+    ]
+    keyboard.append([InlineKeyboardButton("➕ Add New Category", callback_data="add_category")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_back_to_menu")])
+    await query.message.edit_text("Categories:", reply_markup=InlineKeyboardMarkup(keyboard))
     return CATEGORY_MENU
 
-async def add_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cat_key = update.message.text.strip().lower()
-    if cat_key in CATEGORIES:
-        await update.message.reply_text("Category already exists, asshole.")
-        return ADD_CATEGORY
+async def admin_show_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    keyboard = []
+    for key, item in ITEMS.items():
+        keyboard.append([InlineKeyboardButton(f"{item['name']} ✏️", callback_data=f"edit_item_{key}"),
+                         InlineKeyboardButton("🗑️", callback_data=f"delete_item_{key}")])
+    keyboard.append([InlineKeyboardButton("➕ Add New Item", callback_data="add_item")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_back_to_menu")])
+    await query.message.edit_text("Items:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ITEM_MENU
 
-    CATEGORIES[cat_key] = []
+async def admin_edit_item_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, item_key=None):
+    query = update.callback_query
+    if not item_key:
+        item_key = context.user_data.get('edit_item_key')
+    item = ITEMS.get(item_key)
+    if not item:
+        await query.message.edit_text("Item not found.")
+        return await admin_show_items(update, context)
+
+    keyboard = [
+        [InlineKeyboardButton("Name", callback_data="edit_field_name")],
+        [InlineKeyboardButton("Price BTC", callback_data="edit_field_price_btc")],
+        [InlineKeyboardButton("File Path", callback_data="edit_field_file_path")],
+        [InlineKeyboardButton("Category", callback_data="edit_field_category")],
+        [InlineKeyboardButton("⬅️ Back to Items", callback_data="back_to_items")]
+    ]
+    text = f"Editing item *{item_key}*:\n" \
+           f"Name: {item['name']}\n" \
+           f"Price BTC: {item['price_btc']}\n" \
+           f"File Path: {item['file_path']}\n"
+    # Find category
+    cat_for_item = None
+    for cat, items in CATEGORIES.items():
+        if item_key in items:
+            cat_for_item = cat
+            break
+    text += f"Category: {cat_for_item if cat_for_item else 'None'}"
+
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    return ITEM_EDIT_FIELD_SELECT
+
+async def handle_category_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    if ' ' in text or not text.isalnum():
+        await update.message.reply_text("Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel.")
+        return CATEGORY_ADD_NAME
+    if text in CATEGORIES:
+        await update.message.reply_text("Category already exists. Send a different name or /cancel.")
+        return CATEGORY_ADD_NAME
+
+    CATEGORIES[text] = []
     save_json(CATEGORIES_FILE, CATEGORIES)
-    await update.message.reply_text(f"Category '{cat_key}' added.")
-    return await admin_start(update, context)
+    await update.message.reply_text(f"Category *{text}* added.", parse_mode="Markdown")
+    # Return to categories menu (simulate callback)
+    fake_update = update
+    fake_update.callback_query = None
+    return await admin_show_categories(fake_update, context)
 
-async def edit_category_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_name = update.message.text.strip()
-    cat_key = context.user_data.get('edit_cat_key')
-    if not cat_key:
-        await update.message.reply_text("Something went wrong, no category key.")
-        return ConversationHandler.END
+async def handle_category_edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    new_name = update.message.text.strip().lower()
+    old_name = context.user_data.get('edit_cat_key')
 
-    # Rename category key? We'll just change display names by key for simplicity
-    # (You can implement mapping for display names if needed)
-    # For now, no real rename, just notify admin.
-    await update.message.reply_text(f"Category '{cat_key}' name updated to '{new_name}' (not implemented rename key).")
-    return await admin_start(update, context)
+    if ' ' in new_name or not new_name.isalnum():
+        await update.message.reply_text("Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel.")
+        return CATEGORY_EDIT_NAME
 
-# --- Item add/edit ---
+    if new_name in CATEGORIES:
+        await update.message.reply_text("Category name already exists. Send a different name or /cancel.")
+        return CATEGORY_EDIT_NAME
 
-async def item_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if old_name and old_name in CATEGORIES:
+        CATEGORIES[new_name] = CATEGORIES.pop(old_name)
+
+        # Update category names in items if stored elsewhere (we store in keys, so this is enough)
+        save_json(CATEGORIES_FILE, CATEGORIES)
+        await update.message.reply_text(f"Category renamed from *{old_name}* to *{new_name}*.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("Old category not found.")
+    return await admin_show_categories(update, context)
+
+async def handle_item_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    key = update.message.text.strip().lower()
+    if ' ' in key or not key.isalnum():
+        await update.message.reply_text("Invalid item key. Use only letters and numbers, no spaces. Send again or /cancel.")
+        return ITEM_ADD_KEY
+    if key in ITEMS:
+        await update.message.reply_text("Item key already exists. Send another or /cancel.")
+        return ITEM_ADD_KEY
+    context.user_data['new_item_key'] = key
+    await update.message.reply_text("Send me the item *name*.", parse_mode="Markdown")
+    return ITEM_ADD_NAME
+
+async def handle_item_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    context.user_data['new_item_name'] = name
+    await update.message.reply_text("Send me the item *price in BTC* (e.g. 0.0001).", parse_mode="Markdown")
+    return ITEM_ADD_PRICE
+
+async def handle_item_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.strip())
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Invalid price. Enter a positive number like 0.0001. Send again or /cancel.")
+        return ITEM_ADD_PRICE
+    context.user_data['new_item_price'] = price
+    await update.message.reply_text("Send me the item *file path* (relative to the bot script).", parse_mode="Markdown")
+    return ITEM_ADD_PATH
+
+async def handle_item_add_path(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    path = update.message.text.strip()
+    if not os.path.exists(path):
+        await update.message.reply_text("File does not exist. Send a valid file path or /cancel.")
+        return ITEM_ADD_PATH
+    context.user_data['new_item_path'] = path
+
+    # Show categories to choose from
+    keyboard = [
+        [InlineKeyboardButton(cat.title(), callback_data=f"select_cat_{cat}")]
+        for cat in CATEGORIES.keys()
+    ]
+    keyboard.append([InlineKeyboardButton("Cancel", callback_data="admin_back_to_menu")])
+    await update.message.reply_text("Select category for this item:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ITEM_ADD_CATEGORY
+
+async def handle_item_add_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    if not data.startswith("select_cat_"):
+        await query.message.edit_text("Invalid selection, cancelling.")
+        return await admin_show_items(update, context)
 
-    if data == "add_item":
-        await query.message.edit_text("Send me the new item key (lowercase, no spaces):")
-        return ADD_ITEM_WAITING_KEY
+    cat = data[len("select_cat_"):]
+    if cat not in CATEGORIES:
+        await query.message.edit_text("Category not found, cancelling.")
+        return await admin_show_items(update, context)
 
-    elif data.startswith("edit_item_"):
-        item_key = data[10:]
-        context.user_data['edit_item_key'] = item_key
-
-        item = ITEMS.get(item_key)
-        if not item:
-            await query.message.reply_text("Item not found.")
-            return await admin_start(update, context)
-
-        keyboard = [
-            [InlineKeyboardButton("Edit Name", callback_data="edit_field_name")],
-            [InlineKeyboardButton("Edit Price", callback_data="edit_field_price")],
-            [InlineKeyboardButton("Edit File Path", callback_data="edit_field_path")],
-            [InlineKeyboardButton("Edit Category", callback_data="edit_field_category")],
-            [InlineKeyboardButton("Back to Items", callback_data="admin_manage_items")]
-        ]
-        await query.message.edit_text(
-            f"Editing item '{item['name']}': Choose field to edit.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return EDIT_ITEM_FIELD
-
-    elif data == "admin_back":
-        return await admin_start(update, context)
-
-    return ITEM_MENU
-
-async def add_item_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    key = update.message.text.strip().lower()
-    if key in ITEMS:
-        await update.message.reply_text("Item key already exists.")
-        return ADD_ITEM_WAITING_KEY
-    context.user_data['new_item_key'] = key
-    await update.message.reply_text("Send me the item name:")
-    return ADD_ITEM_WAITING_NAME
-
-async def add_item_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text.strip()
-    context.user_data['new_item_name'] = name
-    await update.message.reply_text("Send me the price in BTC (e.g., 0.0001):")
-    return ADD_ITEM_WAITING_PRICE
-
-async def add_item_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        price = float(update.message.text.strip())
-        context.user_data['new_item_price'] = price
-        await update.message.reply_text("Send me the file path (relative to bot root):")
-        return ADD_ITEM_WAITING_PATH
-    except ValueError:
-        await update.message.reply_text("Invalid price, try again:")
-        return ADD_ITEM_WAITING_PRICE
-
-async def add_item_path(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    path = update.message.text.strip()
-    context.user_data['new_item_path'] = path
-
-    # Choose category
-    keyboard = [
-        [InlineKeyboardButton(name.title(), callback_data=f"catselect_{key}")]
-        for key, name in zip(CATEGORIES.keys(), ["Cards", "Tutorials", "Pages"])
-    ]
-    await update.message.reply_text("Select a category for the item:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return ADD_ITEM_WAITING_CATEGORY
-
-async def add_item_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    cat_key = query.data[10:]
-
-    key = context.user_data.get('new_item_key')
-    name = context.user_data.get('new_item_name')
-    price = context.user_data.get('new_item_price')
-    path = context.user_data.get('new_item_path')
-
-    if not all([key, name, price, path]):
-        await query.message.reply_text("Missing item data, aborting.")
-        return await admin_start(update, context)
-
-    # Save item
+    key = context.user_data['new_item_key']
     ITEMS[key] = {
-        "name": name,
-        "price_btc": price,
-        "file_path": path
+        "name": context.user_data['new_item_name'],
+        "price_btc": context.user_data['new_item_price'],
+        "file_path": context.user_data['new_item_path']
     }
-    if cat_key not in CATEGORIES:
-        CATEGORIES[cat_key] = []
-    CATEGORIES[cat_key].append(key)
+    CATEGORIES[cat].append(key)
+    save_json(ITEMS_FILE, ITEMS)
+    save_json(CATEGORIES_FILE, CATEGORIES)
+
+    await query.message.edit_text(f"Item *{key}* added to category *{cat}*.", parse_mode="Markdown")
+    return await admin_show_items(update, context)
+
+async def handle_item_edit_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    item_key = context.user_data.get('edit_item_key')
+    field = context.user_data.get('edit_item_field')
+    if not item_key or not field:
+        await update.message.reply_text("No item or field selected. /cancel")
+        return ConversationHandler.END
+
+    if item_key not in ITEMS:
+        await update.message.reply_text("Item not found. /cancel")
+        return ConversationHandler.END
+
+    # Handle price field specially (validate float)
+    if field == "price_btc":
+        try:
+            val = float(text)
+            if val <= 0:
+                raise ValueError
+            ITEMS[item_key][field] = val
+        except ValueError:
+            await update.message.reply_text("Invalid price. Send a positive number or /cancel.")
+            return ITEM_EDIT_FIELD_VALUE
+    elif field == "category":
+        if text not in CATEGORIES:
+            await update.message.reply_text(f"Category '{text}' does not exist. Send an existing category or /cancel.")
+            return ITEM_EDIT_FIELD_VALUE
+        # Remove item from old category and add to new one
+        for cat, items in CATEGORIES.items():
+            if item_key in items:
+                items.remove(item_key)
+        CATEGORIES[text].append(item_key)
+    else:
+        # name or file_path
+        if field == "file_path" and not os.path.exists(text):
+            await update.message.reply_text("File path does not exist. Send valid path or /cancel.")
+            return ITEM_EDIT_FIELD_VALUE
+        ITEMS[item_key][field] = text
 
     save_json(ITEMS_FILE, ITEMS)
     save_json(CATEGORIES_FILE, CATEGORIES)
 
-    await query.message.reply_text(f"Item '{name}' added under category '{cat_key}'.")
-    return await admin_start(update, context)
+    await update.message.reply_text(f"Updated {field} for item *{item_key}*.", parse_mode="Markdown")
+    return await admin_edit_item_menu(update, context, item_key)
 
-async def edit_item_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    field = query.data[11:]
-    context.user_data['edit_field'] = field
-
-    await query.message.edit_text(f"Send me the new value for {field}:")
-    return EDIT_ITEM_NEW_VALUE
-
-async def edit_item_new_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_val = update.message.text.strip()
-    field = context.user_data.get('edit_field')
-    item_key = context.user_data.get('edit_item_key')
-
-    if not item_key or not field:
-        await update.message.reply_text("Missing context info, aborting.")
-        return await admin_start(update, context)
-
-    item = ITEMS.get(item_key)
-    if not item:
-        await update.message.reply_text("Item not found.")
-        return await admin_start(update, context)
-
-    # Cast price to float
-    if field == "price":
-        try:
-            new_val = float(new_val)
-        except ValueError:
-            await update.message.reply_text("Invalid price format.")
-            return EDIT_ITEM_NEW_VALUE
-
-    item[field] = new_val
-    save_json(ITEMS_FILE, ITEMS)
-
-    await update.message.reply_text(f"Item '{item_key}' {field} updated.")
-    return await admin_start(update, context)
-
+# Cancel handler
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
@@ -435,27 +538,32 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("confirm", confirm_payment))
-    app.add_handler(CallbackQueryHandler(button_callback, pattern="^(cat_|back_to_categories|item)"))
+    app.add_handler(CallbackQueryHandler(button_callback))
 
-    conv_handler = ConversationHandler(
+    admin_conv = ConversationHandler(
         entry_points=[CommandHandler("admin", admin_start)],
         states={
-            ADMIN_MENU: [CallbackQueryHandler(admin_menu_handler, pattern="^admin_")],
-            CATEGORY_MENU: [CallbackQueryHandler(category_menu_handler, pattern="^(add_category|edit_cat_|admin_back)$")],
-            ADD_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_category)],
-            EDIT_CATEGORY_NEW_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_category_new_name)],
-            ITEM_MENU: [CallbackQueryHandler(item_menu_handler, pattern="^(add_item|edit_item_|admin_back)$")],
-            ADD_ITEM_WAITING_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_key)],
-            ADD_ITEM_WAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_name)],
-            ADD_ITEM_WAITING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_price)],
-            ADD_ITEM_WAITING_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_path)],
-            ADD_ITEM_WAITING_CATEGORY: [CallbackQueryHandler(add_item_category_handler, pattern="^catselect_")],
-            EDIT_ITEM_FIELD: [CallbackQueryHandler(edit_item_field_handler, pattern="^edit_field_")],
-            EDIT_ITEM_NEW_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_item_new_value_handler)],
+            ADMIN_MENU: [CallbackQueryHandler(admin_callback_handler, pattern="^admin_")],
+            CATEGORY_MENU: [CallbackQueryHandler(admin_callback_handler, pattern="^(add_category|edit_cat_|delete_cat_|confirm_delete_cat|admin_back_to_menu)$")],
+            CATEGORY_ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_add_name)],
+            CATEGORY_EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_edit_name)],
+            CATEGORY_DELETE_CONFIRM: [CallbackQueryHandler(admin_callback_handler, pattern="^(confirm_delete_cat|admin_manage_categories)$")],
+
+            ITEM_MENU: [CallbackQueryHandler(admin_callback_handler, pattern="^(add_item|edit_item_|delete_item_|confirm_delete_item|admin_back_to_menu)$")],
+            ITEM_ADD_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_key)],
+            ITEM_ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_name)],
+            ITEM_ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_price)],
+            ITEM_ADD_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_path)],
+            ITEM_ADD_CATEGORY: [CallbackQueryHandler(handle_item_add_category, pattern="^select_cat_")],
+            ITEM_EDIT_SELECT: [CallbackQueryHandler(admin_callback_handler, pattern="^(edit_field_|back_to_items)$")],
+            ITEM_EDIT_FIELD_SELECT: [CallbackQueryHandler(admin_callback_handler, pattern="^(edit_field_|back_to_items)$")],
+            ITEM_EDIT_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_edit_field_value)],
+            ITEM_DELETE_CONFIRM: [CallbackQueryHandler(admin_callback_handler, pattern="^(confirm_delete_item|admin_manage_items)$")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
     )
-    app.add_handler(conv_handler)
+    app.add_handler(admin_conv)
 
     if os.environ.get("RENDER"):
         port = int(os.environ.get("PORT", 5000))
