@@ -7,19 +7,24 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
+TELEGRAM_TOKEN = "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
 BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")
 
 # Hosted video URL (direct .mp4 link)
 VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=1754980438031"
 
-# Sample digital items
+# Categories mapping to item keys
+CATEGORIES = {
+    "files": ["item1", "item2"],
+    "archives": ["item2"],
+}
+
+# Items data
 ITEMS = {
     "item1": {"name": "Dark Secret File", "price_btc": 0.0001, "file_path": "items/secret.pdf"},
     "item2": {"name": "Forbidden Archive", "price_btc": 0.0002, "file_path": "items/archive.zip"}
 }
 
-# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.message.reply_video(
@@ -29,48 +34,77 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error sending video: {e}")
 
-    keyboard = [[InlineKeyboardButton(item["name"], callback_data=key) for key, item in ITEMS.items()]]
+    keyboard = [
+        [InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat_key}")]
+        for cat_key in CATEGORIES.keys()
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Pick your poison:", reply_markup=reply_markup)
+    await update.message.reply_text("Choose a category:", reply_markup=reply_markup)
 
-# Item purchase callback
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    item_key = query.data
-    item = ITEMS.get(item_key)
+    data = query.data
 
-    if not item:
-        await query.message.reply_text("Item’s gone, asshole. Pick something else.")
-        return
+    if data.startswith("cat_"):
+        cat_key = data[4:]
+        items_in_cat = CATEGORIES.get(cat_key, [])
 
-    try:
-        headers = {'Authorization': f'Bearer {BLOCKONOMICS_API_KEY}'}
-        response = requests.post('https://www.blockonomics.co/api/new_address', headers=headers)
-        response.raise_for_status()
-        btc_address = response.json()['address']
-    except Exception as e:
-        await query.message.reply_text(f"Failed to get BTC address: {str(e)}. Try again, dipshit.")
-        return
+        if not items_in_cat:
+            await query.message.edit_text("Nothing here, asshole.")
+            return
 
-    context.user_data['pending_payment'] = {
-        'item_key': item_key,
-        'address': btc_address,
-        'amount': item['price_btc']
-    }
+        keyboard = [
+            [InlineKeyboardButton(ITEMS[item_key]["name"], callback_data=item_key)]
+            for item_key in items_in_cat
+        ]
+        keyboard.append([InlineKeyboardButton("⬅️ Back to categories", callback_data="back_to_categories")])
 
-    await query.message.reply_text(
-        f"Send {item['price_btc']} BTC to {btc_address} for {item['name']}.\n"
-        "Run /confirm when you’ve paid, or I’ll know you’re a cheap fuck."
-    )
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(f"Items in {cat_key.title()}:", reply_markup=reply_markup)
 
-    async def taunt():
-        await asyncio.sleep(600)
-        if context.user_data.get('pending_payment'):
-            await query.message.reply_text("Still no payment? You’re pissing me off, scum.")
-    asyncio.create_task(taunt())
+    elif data == "back_to_categories":
+        keyboard = [
+            [InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat_key}")]
+            for cat_key in CATEGORIES.keys()
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text("Choose a category:", reply_markup=reply_markup)
 
-# /confirm command
+    else:
+        item_key = data
+        item = ITEMS.get(item_key)
+
+        if not item:
+            await query.message.reply_text("Item’s gone, asshole. Pick something else.")
+            return
+
+        try:
+            headers = {'Authorization': f'Bearer {BLOCKONOMICS_API_KEY}'}
+            response = requests.post('https://www.blockonomics.co/api/new_address', headers=headers)
+            response.raise_for_status()
+            btc_address = response.json()['address']
+        except Exception as e:
+            await query.message.reply_text(f"Failed to get BTC address: {str(e)}. Try again, dipshit.")
+            return
+
+        context.user_data['pending_payment'] = {
+            'item_key': item_key,
+            'address': btc_address,
+            'amount': item['price_btc']
+        }
+
+        await query.message.edit_text(
+            f"Send {item['price_btc']} BTC to {btc_address} for {item['name']}.\n"
+            "Run /confirm when you’ve paid, or I’ll know you’re a cheap fuck."
+        )
+
+        async def taunt():
+            await asyncio.sleep(600)
+            if context.user_data.get('pending_payment'):
+                await query.message.reply_text("Still no payment? You’re pissing me off, scum.")
+        asyncio.create_task(taunt())
+
 async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending = context.user_data.get('pending_payment')
     if not pending:
@@ -105,7 +139,6 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Payment check failed: {str(e)}. Try again, dumbass.")
 
-# Main entry point
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -113,9 +146,7 @@ def main():
     app.add_handler(CommandHandler("confirm", confirm_payment))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    # Detect if running on Render
     if os.environ.get("RENDER"):
-        # Webhook mode for production
         port = int(os.environ.get("PORT", 5000))
         webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/{TELEGRAM_TOKEN}"
         app.run_webhook(
@@ -125,7 +156,6 @@ def main():
             webhook_url=webhook_url
         )
     else:
-        # Polling mode for local development
         app.run_polling()
 
 if __name__ == "__main__":
