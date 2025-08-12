@@ -17,7 +17,7 @@ ITEMS = {
 }
 
 # Video path
-VIDEO_PATH = "tele_bot/game over.mp4"
+VIDEO_PATH = os.path.join(os.path.dirname(__file__), "tele_bot", "game_over.mp4")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
