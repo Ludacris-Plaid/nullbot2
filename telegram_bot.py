@@ -17,7 +17,7 @@ ITEMS = {
 }
 
 # Path to your .mp4 file (replace with your actual video)
-VIDEO_PATH = "https://www.viddler.com/HPa5e8"
+VIDEO_PATH = "/Users/anon/Desktop/game over.mp4"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send the .mp4 video when /start is triggered
