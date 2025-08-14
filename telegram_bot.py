@@ -89,7 +89,7 @@ def save_json(filepath: str, data: Any) -> None:
         log.error(f"Failed to save {filepath}: {e}")
 
 
-# initial defaults
+# initial defaults (used if files absent)
 CATEGORIES: Dict[str, List[str]] = load_json(
     CATEGORIES_FILE,
     {"cards": ["item1", "item3", "item7"], "tutorials": ["item2", "item5", "item6", "item9"], "pages": ["item4", "item8", "item10"]},
@@ -118,50 +118,34 @@ def spicy(nice: str, spicy: str) -> str:
     return spicy if SPICY_MODE else nice
 
 
-WELCOME_TEXT = spicy(
-    "Welcome.",
-    "Welcome to the dark side, fucker.",
-)
-NO_ITEMS_TEXT = spicy(
-    "No items found in this category.",
-    "No items found in this category, asshole.",
-)
-NO_PENDING_TEXT = spicy(
-    "No pending payment.",
-    "No pending payment, asshole. Buy something first.",
-)
-SEND_AFTER_PAY_TEXT = spicy(
-    "Run /confirm when you’ve paid.",
-    "Run /confirm when you’ve paid, or I’ll know you’re a cheap fuck.",
-)
-NOT_CONFIRMED_TEXT = spicy(
-    "Payment not confirmed yet.",
-    "Payment not confirmed yet. Don’t fuck with me.",
-)
-PAYMENT_CHECK_FAIL_TEXT = spicy(
-    "Payment check failed. Try again later.",
-    "Payment check failed. Try again, dumbass.",
-)
-FILE_MISSING_TEXT = spicy(
-    "File not found. Please contact the admin.",
-    "File’s fucked. Fix the path, moron.",
-)
-NOT_ADMIN_TEXT = spicy(
-    "You are not authorized to use admin mode.",
-    "You’re not admin, get lost.",
-)
+WELCOME_TEXT = spicy("Welcome.", "Welcome to the dark side, fucker.")
+NO_ITEMS_TEXT = spicy("No items found in this category.", "No items found in this category, asshole.")
+NO_PENDING_TEXT = spicy("No pending payment.", "No pending payment, asshole. Buy something first.")
+SEND_AFTER_PAY_TEXT = spicy("Run /confirm when you’ve paid.", "Run /confirm when you’ve paid, or I’ll know you’re a cheap fuck.")
+NOT_CONFIRMED_TEXT = spicy("Payment not confirmed yet.", "Payment not confirmed yet. Don’t fuck with me.")
+PAYMENT_CHECK_FAIL_TEXT = spicy("Payment check failed. Try again later.", "Payment check failed. Try again, dumbass.")
+FILE_MISSING_TEXT = spicy("File not found. Please contact the admin.", "File’s fucked. Fix the path, moron.")
+NOT_ADMIN_TEXT = spicy("You are not authorized to use admin mode.", "You’re not admin, get lost.")
 
 
 # =========================
 # Utility: Context-safe message edit/reply
 # =========================
-async def safe_reply_or_edit(update: Update, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None, parse_mode: Optional[str] = None):
+async def safe_reply_or_edit(
+    update: Update,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+    parse_mode: Optional[str] = None,
+):
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            await update.callback_query.message.edit_text(
+                text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
         except Exception:
-            # fall back to replying
-            await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            await update.callback_query.message.reply_text(
+                text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
@@ -170,17 +154,16 @@ async def safe_reply_or_edit(update: Update, text: str, reply_markup: Optional[I
 # Payment utils (Blockonomics)
 # =========================
 async def get_aiohttp_session(context: ContextTypes.DEFAULT_TYPE) -> aiohttp.ClientSession:
-    """
-    Reuse a single aiohttp session stored on application for efficiency.
-    """
+    """Reuse a single aiohttp session stored on application for efficiency."""
     app_data = context.application.bot_data
     if "aiohttp_session" not in app_data or app_data["aiohttp_session"].closed:
-        app_data["aiohttp_session"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+        app_data["aiohttp_session"] = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=20)
+        )
     return app_data["aiohttp_session"]
 
 
 def btc_link(address: str, amount: float) -> str:
-    # Deep link for wallet apps
     return f"bitcoin:{address}?amount={amount}"
 
 
@@ -200,9 +183,7 @@ async def blockonomics_new_address(context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 async def blockonomics_confirmed_btc(context: ContextTypes.DEFAULT_TYPE, address: str) -> float:
-    """
-    Returns confirmed balance in BTC for the given address.
-    """
+    """Returns confirmed balance in BTC for the given address."""
     session = await get_aiohttp_session(context)
     headers = {"Authorization": f"Bearer {BLOCKONOMICS_API_KEY}"}
 
@@ -221,10 +202,7 @@ async def blockonomics_confirmed_btc(context: ContextTypes.DEFAULT_TYPE, address
             txt = await resp.text()
             raise RuntimeError(f"balance failed: HTTP {resp.status} - {txt}")
         data = await resp.json()
-    try:
-        sat = data["data"][0]["confirmed"]
-    except Exception as e:
-        raise RuntimeError(f"bad balance payload: {e}")
+    sat = data["data"][0]["confirmed"]
     return float(sat) / 1e8
 
 
@@ -237,12 +215,12 @@ def is_admin(update: Update) -> bool:
 
 
 def categories_keyboard() -> InlineKeyboardMarkup:
-    keyboard = [[InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat}")] for cat in CATEGORIES.keys()]
+    keyboard = [[InlineKeyboardButton(cat.title(), callback_data=f"cat_{cat}")]
+                for cat in CATEGORIES.keys()]
     return InlineKeyboardMarkup(keyboard)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # welcome video (non-blocking)
     try:
         if VIDEO_URL:
             await update.message.reply_video(video=VIDEO_URL, caption=WELCOME_TEXT)
@@ -269,7 +247,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data or ""
+    data = (query.data or "").strip()
     log.info(f"[DEBUG] callback: {data}")
 
     if data.startswith("cat_"):
@@ -285,7 +263,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if key in ITEMS
         ]
         keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_categories")])
-        await query.message.edit_text(f"Items in *{cat_key.title()}*:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(
+            f"Items in *{cat_key.title()}*:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
     elif data == "back_to_categories":
         await query.message.edit_text("Choose a category:", reply_markup=categories_keyboard())
@@ -301,10 +283,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             address = await blockonomics_new_address(context)
             log.info(f"[DEBUG] new BTC address: {address}")
         except Exception as e:
-            await query.message.reply_text(spicy(f"Failed to get BTC address: {e}", f"Failed to get BTC address: {e}. Try again, dipshit."))
+            await query.message.reply_text(
+                spicy(f"Failed to get BTC address: {e}", f"Failed to get BTC address: {e}. Try again, dipshit.")
+            )
             return
 
-        # Stash pending payment
         context.user_data["pending_payment"] = {
             "item_key": item_key,
             "address": address,
@@ -325,18 +308,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
 
-        # Gentle reminder in 10 minutes
-        async def taunt():
+        async def reminder():
             await asyncio.sleep(600)
             if context.user_data.get("pending_payment"):
                 await query.message.reply_text(
                     spicy("Still no payment?", "Still no payment? You’re pissing me off, scum.")
                 )
-
-        asyncio.create_task(taunt())
+        asyncio.create_task(reminder())
 
     elif data.startswith("admin_"):
-        # Route to admin handler
         await admin_callback_handler(update, context)
 
     else:
@@ -369,16 +349,23 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(FILE_MISSING_TEXT)
             return
 
-        # Send file
         try:
             with open(fpath, "rb") as fp:
-                await update.message.reply_document(document=InputFile(fp), caption=spicy(f"Here's your {item['name']}.", f"Here's your {item['name']}. Enjoy, you sick fuck."))
+                await update.message.reply_document(
+                    document=InputFile(fp),
+                    caption=spicy(f"Here's your {item['name']}.", f"Here's your {item['name']}. Enjoy, you sick fuck."),
+                )
             del context.user_data["pending_payment"]
         except Exception as e:
             await update.message.reply_text(f"Failed to deliver file: {e}")
     else:
         shortfall = amount_req - received_btc
-        await update.message.reply_text(f"{NOT_CONFIRMED_TEXT}\n\nReceived: {received_btc:.8f} BTC\nNeeded: {amount_req:.8f} BTC\nShort: {shortfall:.8f} BTC")
+        await update.message.reply_text(
+            f"{NOT_CONFIRMED_TEXT}\n\n"
+            f"Received: {received_btc:.8f} BTC\n"
+            f"Needed: {amount_req:.8f} BTC\n"
+            f"Short: {shortfall:.8f} BTC"
+        )
 
 
 # =========================
@@ -404,7 +391,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data or ""
+    data = (query.data or "").strip()
 
     if data == "admin_manage_categories":
         return await admin_show_categories(update, context)
@@ -421,7 +408,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Category flows
     if data == "add_category":
-        await query.message.edit_text("Send me the *name* of the new category (lowercase, letters/numbers only).", parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(
+            "Send me the *name* of the new category (lowercase, letters/numbers only).",
+            parse_mode=ParseMode.MARKDOWN,
+        )
         return CATEGORY_ADD_NAME
 
     if data.startswith("edit_cat_"):
@@ -461,7 +451,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Item flows
     if data == "add_item":
-        await query.message.edit_text("Send the new item *key* (unique id, lowercase letters/numbers).", parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(
+            "Send the new item *key* (unique id, lowercase letters/numbers).",
+            parse_mode=ParseMode.MARKDOWN,
+        )
         return ITEM_ADD_KEY
 
     if data.startswith("edit_item_"):
@@ -481,7 +474,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("No, go back", callback_data="admin_manage_items")],
             ]
         )
-        await query.message.edit_text(f"Delete item *{item_key}*?", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(
+            f"Delete item *{item_key}*?", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
+        )
         return ITEM_DELETE_CONFIRM
 
     if data == "confirm_delete_item":
@@ -501,7 +496,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("edit_field_"):
         field = data.replace("edit_field_", "", 1)
         context.user_data["edit_item_field"] = field
-        await query.message.edit_text(f"Send new value for *{field}*, or /cancel.", parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(
+            f"Send new value for *{field}*, or /cancel.", parse_mode=ParseMode.MARKDOWN
+        )
         return ITEM_EDIT_FIELD_VALUE
 
     # Back buttons
@@ -519,8 +516,10 @@ async def admin_show_categories(update: Update, context: ContextTypes.DEFAULT_TY
     rows = []
     for key in CATEGORIES.keys():
         rows.append(
-            [InlineKeyboardButton(f"{key.title()} ✏️", callback_data=f"edit_cat_{key}"),
-             InlineKeyboardButton("🗑️", callback_data=f"delete_cat_{key}")]
+            [
+                InlineKeyboardButton(f"{key.title()} ✏️", callback_data=f"edit_cat_{key}"),
+                InlineKeyboardButton("🗑️", callback_data=f"delete_cat_{key}"),
+            ]
         )
     rows.append([InlineKeyboardButton("➕ Add New Category", callback_data="add_category")])
     rows.append([InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_back_to_menu")])
@@ -533,8 +532,10 @@ async def admin_show_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = []
     for key, item in ITEMS.items():
         rows.append(
-            [InlineKeyboardButton(f"{item['name']} ✏️", callback_data=f"edit_item_{key}"),
-             InlineKeyboardButton("🗑️", callback_data=f"delete_item_{key}")]
+            [
+                InlineKeyboardButton(f"{item['name']} ✏️", callback_data=f"edit_item_{key}"),
+                InlineKeyboardButton("🗑️", callback_data=f"delete_item_{key}"),
+            ]
         )
     rows.append([InlineKeyboardButton("➕ Add New Item", callback_data="add_item")])
     rows.append([InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_back_to_menu")])
@@ -543,7 +544,9 @@ async def admin_show_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ITEM_MENU
 
 
-async def admin_edit_item_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, item_key: Optional[str] = None):
+async def admin_edit_item_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, item_key: Optional[str] = None
+):
     if not item_key:
         item_key = context.user_data.get("edit_item_key")
     item = ITEMS.get(item_key)
@@ -551,7 +554,6 @@ async def admin_edit_item_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         await safe_reply_or_edit(update, "Item not found.")
         return await admin_show_items(update, context)
 
-    # find category for item
     cat_for_item = None
     for cat, items in CATEGORIES.items():
         if item_key in items:
@@ -584,7 +586,9 @@ async def admin_edit_item_menu(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_category_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
     if " " in text or not text.isalnum():
-        await update.message.reply_text("Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel.")
+        await update.message.reply_text(
+            "Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel."
+        )
         return CATEGORY_ADD_NAME
     if text in CATEGORIES:
         await update.message.reply_text("Category already exists. Send a different name or /cancel.")
@@ -601,7 +605,9 @@ async def handle_category_edit_name(update: Update, context: ContextTypes.DEFAUL
     old_name = context.user_data.get("edit_cat_key")
 
     if " " in new_name or not new_name.isalnum():
-        await update.message.reply_text("Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel.")
+        await update.message.reply_text(
+            "Invalid category name. Use only letters and numbers, no spaces. Send again or /cancel."
+        )
         return CATEGORY_EDIT_NAME
 
     if new_name in CATEGORIES:
@@ -611,7 +617,9 @@ async def handle_category_edit_name(update: Update, context: ContextTypes.DEFAUL
     if old_name and old_name in CATEGORIES:
         CATEGORIES[new_name] = CATEGORIES.pop(old_name)
         save_json(CATEGORIES_FILE, CATEGORIES)
-        await update.message.reply_text(f"Category renamed from *{old_name}* to *{new_name}*.", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"Category renamed from *{old_name}* to *{new_name}*.", parse_mode=ParseMode.MARKDOWN
+        )
     else:
         await update.message.reply_text("Old category not found.")
     return await admin_show_categories(update, context)
@@ -634,7 +642,9 @@ def _restrict_items_dir(path: str) -> Optional[str]:
 async def handle_item_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = update.message.text.strip().lower()
     if " " in key or not key.isalnum():
-        await update.message.reply_text("Invalid item key. Use only letters and numbers, no spaces. Send again or /cancel.")
+        await update.message.reply_text(
+            "Invalid item key. Use only letters and numbers, no spaces. Send again or /cancel."
+        )
         return ITEM_ADD_KEY
     if key in ITEMS:
         await update.message.reply_text("Item key already exists. Send another or /cancel.")
@@ -657,7 +667,9 @@ async def handle_item_add_price(update: Update, context: ContextTypes.DEFAULT_TY
         if price <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text("Invalid price. Enter a positive number like 0.0001. Send again or /cancel.")
+        await update.message.reply_text(
+            "Invalid price. Enter a positive number like 0.0001. Send again or /cancel."
+        )
         return ITEM_ADD_PRICE
     context.user_data["new_item_price"] = price
     await update.message.reply_text("Send me the item *file path* (path under ./items).", parse_mode=ParseMode.MARKDOWN)
@@ -672,7 +684,8 @@ async def handle_item_add_path(update: Update, context: ContextTypes.DEFAULT_TYP
         return ITEM_ADD_PATH
     context.user_data["new_item_path"] = safe_path
 
-    keyboard = [[InlineKeyboardButton(cat.title(), callback_data=f"select_cat_{cat}")] for cat in CATEGORIES.keys()]
+    keyboard = [[InlineKeyboardButton(cat.title(), callback_data=f"select_cat_{cat}")]
+                for cat in CATEGORIES.keys()]
     keyboard.append([InlineKeyboardButton("Cancel", callback_data="admin_back_to_menu")])
     await update.message.reply_text("Select category for this item:", reply_markup=InlineKeyboardMarkup(keyboard))
     return ITEM_ADD_CATEGORY
@@ -765,7 +778,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# App bootstrap
+# App bootstrap (PTB v20+)
 # =========================
 
 async def on_startup(app: Application):
@@ -773,20 +786,25 @@ async def on_startup(app: Application):
 
 
 async def on_shutdown(app: Application):
-    # Close aiohttp session if exists
     sess: Optional[aiohttp.ClientSession] = app.bot_data.get("aiohttp_session")
     if sess and not sess.closed:
         await sess.close()
     log.info("Bot shut down.")
 
 
-def main():
+def build_application() -> Application:
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN not set")
     if not BLOCKONOMICS_API_KEY:
         log.warning("BLOCKONOMICS_API_KEY not set. Payments will fail.")
 
-    app = Application.builder().token(TELEGRAM_TOKEN).post_init(on_startup).post_shutdown(on_shutdown).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_init(on_startup)
+        .post_shutdown(on_shutdown)
+        .build()
+    )
 
     # Public
     app.add_handler(CommandHandler("start", start))
@@ -800,32 +818,48 @@ def main():
         entry_points=[CommandHandler("admin", admin_start)],
         states={
             ADMIN_MENU: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^admin_(manage_categories|manage_items|exit|back_to_menu)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^admin_(manage_categories|manage_items|exit|back_to_menu)$",
+                ),
             ],
             CATEGORY_MENU: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^(add_category|edit_cat_.+|delete_cat_.+|confirm_delete_cat|admin_back_to_menu)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^(add_category|edit_cat_.+|delete_cat_.+|confirm_delete_cat|admin_back_to_menu)$",
+                ),
             ],
             CATEGORY_ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_add_name)],
             CATEGORY_EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_edit_name)],
             CATEGORY_DELETE_CONFIRM: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^(confirm_delete_cat|admin_manage_categories)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^(confirm_delete_cat|admin_manage_categories)$",
+                ),
             ],
-
             ITEM_MENU: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^(add_item|edit_item_.+|delete_item_.+|confirm_delete_item|admin_back_to_menu)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^(add_item|edit_item_.+|delete_item_.+|confirm_delete_item|admin_back_to_menu)$",
+                ),
             ],
             ITEM_ADD_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_key)],
             ITEM_ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_name)],
             ITEM_ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_price)],
             ITEM_ADD_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_add_path)],
             ITEM_ADD_CATEGORY: [CallbackQueryHandler(handle_item_add_category, pattern=r"^select_cat_.+$")],
-
             ITEM_EDIT_FIELD_SELECT: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^(edit_field_.+|back_to_items)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^(edit_field_.+|back_to_items)$",
+                ),
             ],
             ITEM_EDIT_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_item_edit_field_value)],
             ITEM_DELETE_CONFIRM: [
-                CallbackQueryHandler(admin_callback_handler, pattern=r"^(confirm_delete_item|admin_manage_items)$"),
+                CallbackQueryHandler(
+                    admin_callback_handler,
+                    pattern=r"^(confirm_delete_item|admin_manage_items)$",
+                ),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -833,15 +867,27 @@ def main():
     )
     app.add_handler(admin_conv)
 
-    # Render webhook support or polling
+    return app
+
+
+def main():
+    app = build_application()
+
+    # If Render sets RENDER env var, we run webhook (web service). Otherwise, polling (local/worker).
     if os.environ.get("RENDER"):
         port = int(os.environ.get("PORT", 5000))
-        webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/{TELEGRAM_TOKEN}"
+        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')}/{TELEGRAM_TOKEN}"
+        if not webhook_url.endswith(TELEGRAM_TOKEN):
+            # Ensure a usable URL even if RENDER_EXTERNAL_HOSTNAME isn't set.
+            log.warning("RENDER_EXTERNAL_HOSTNAME missing; falling back to polling.")
+            app.run_polling(allowed_updates=["message", "callback_query"])
+            return
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_TOKEN,
             webhook_url=webhook_url,
+            allowed_updates=["message", "callback_query"],
         )
     else:
         app.run_polling(allowed_updates=["message", "callback_query"])
