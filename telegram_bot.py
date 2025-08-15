@@ -873,15 +873,17 @@ def build_application() -> Application:
 def main():
     app = build_application()
 
-    # If Render sets RENDER env var, we run webhook (web service). Otherwise, polling (local/worker).
+    # If Render sets RENDER, prefer webhook. Otherwise polling.
     if os.environ.get("RENDER"):
         port = int(os.environ.get("PORT", 5000))
-        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')}/{TELEGRAM_TOKEN}"
-        if not webhook_url.endswith(TELEGRAM_TOKEN):
-            # Ensure a usable URL even if RENDER_EXTERNAL_HOSTNAME isn't set.
+        # Render typically sets RENDER_EXTERNAL_HOSTNAME
+        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+        if not host:
             log.warning("RENDER_EXTERNAL_HOSTNAME missing; falling back to polling.")
             app.run_polling(allowed_updates=["message", "callback_query"])
             return
+
+        webhook_url = f"https://{host}/{TELEGRAM_TOKEN}"
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
