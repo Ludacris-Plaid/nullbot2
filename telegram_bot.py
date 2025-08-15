@@ -23,7 +23,7 @@ RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
 VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=1754980438031"
 
-ADMIN_USER_ID = 7260656020  # Your admin Telegram user ID
+ADMIN_USER_ID = 7260656020  # Replace with your actual Telegram user ID
 
 CATEGORIES_FILE = "categories.json"
 ITEMS_FILE = "items.json"
@@ -130,7 +130,7 @@ async def fetch_btc_address(user_id: int):
         return None
     async with aiohttp.ClientSession() as session:
         headers = {'Authorization': f'Bearer {BLOCKONOMICS_API_KEY}'}
-        for attempt in range(3):  # Retry 3 times
+        for attempt in range(3):
             try:
                 async with session.post('https://www.blockonomics.co/api/new_address', headers=headers, timeout=15) as resp:
                     resp.raise_for_status()
@@ -225,7 +225,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.warning(f"User {user_id} selected invalid item: {item_key}")
             return
 
-        # Rate limit BTC address requests (10 per minute)
         last_request = context.user_data.get('last_btc_request', 0)
         if time.time() - last_request < 6:
             await query.message.reply_text("Slow down, you greedy fuck. Wait a minute before begging for another address.")
@@ -259,7 +258,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info(f"Payment requested for {item_key} by user {user_id}: {btc_address}")
 
         async def check_payment():
-            timeout = 3600  # 1 hour
+            timeout = 3600
             while time.time() - context.user_data['pending_payment']['start_time'] < timeout:
                 received_btc = await check_btc_balance(btc_address, item['price_btc'], user_id)
                 if received_btc >= item['price_btc']:
@@ -315,9 +314,10 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info(f"Payment not confirmed for {pending['item_key']} by user {user_id}")
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if not is_admin(update):
         await update.message.reply_text("You’re not admin, you pathetic worm. Get lost.")
-        logging.warning(f"Non-admin user {update.effective_user.id} attempted /admin")
+        logging.warning(f"Non-admin user {user_id} attempted /admin")
         return ConversationHandler.END
 
     keyboard = [
@@ -327,6 +327,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Admin menu, you sadistic fuck:", reply_markup=reply_markup)
+    logging.info(f"Admin menu accessed by user {user_id}")
     return ADMIN_MENU
 
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,98 +335,123 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     data = query.data
     user_id = query.from_user.id
-    logging.info(f"Admin callback: {data} by user {user_id}")
+    logging.debug(f"Admin callback: {data} by user {user_id}")
 
-    if data == "admin_manage_categories":
-        return await admin_show_categories(update, context)
-    elif data == "admin_manage_items":
-        return await admin_show_items(update, context)
-    elif data == "admin_exit":
-        await query.message.edit_text("Exiting admin mode, you cruel bastard.")
-        return ConversationHandler.END
-    elif data == "admin_back_to_menu":
-        return await admin_start(update, context)
-    elif data == "add_category":
-        await query.message.edit_text("Send me the *name* of the new category (lowercase, no spaces).", parse_mode="Markdown")
-        return CATEGORY_ADD_NAME
-    elif data.startswith("edit_cat_"):
-        cat_key = data[len("edit_cat_"):]
-        context.user_data['edit_cat_key'] = cat_key
-        await query.message.edit_text(
-            f"Editing category *{cat_key}*\nSend new name (lowercase, no spaces), or /cancel.",
-            parse_mode="Markdown"
-        )
-        return CATEGORY_EDIT_NAME
-    elif data.startswith("delete_cat_"):
-        cat_key = data[len("delete_cat_"):]
-        context.user_data['del_cat_key'] = cat_key
-        keyboard = [
-            [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_cat")],
-            [InlineKeyboardButton("No, go back", callback_data="admin_manage_categories")]
-        ]
-        await query.message.edit_text(
-            f"Delete category *{cat_key}*? Items will be orphaned, you heartless fuck.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        return CATEGORY_DELETE_CONFIRM
-    elif data == "confirm_delete_cat":
-        cat_key = context.user_data.get('del_cat_key')
-        if cat_key and cat_key in CATEGORIES:
-            del CATEGORIES[cat_key]
-            save_json(CATEGORIES_FILE, CATEGORIES)
-            await query.message.edit_text(f"Category *{cat_key}* deleted, you ruthless prick.")
-        else:
-            await query.message.edit_text("No category selected, dumbass.")
-        return await admin_show_categories(update, context)
-    elif data == "add_item":
-        await query.message.edit_text("Send new item *key* (unique id, no spaces).", parse_mode="Markdown")
-        return ITEM_ADD_KEY
-    elif data.startswith("edit_item_"):
-        item_key = data[len("edit_item_"):]
-        if item_key not in ITEMS:
-            await query.message.edit_text("Item not found, you blind fuck.")
+    try:
+        if data == "admin_manage_categories":
+            return await admin_show_categories(update, context)
+        elif data == "admin_manage_items":
             return await admin_show_items(update, context)
-        context.user_data['edit_item_key'] = item_key
-        return await admin_edit_item_menu(update, context, item_key)
-    elif data.startswith("delete_item_"):
-        item_key = data[len("delete_item_"):]
-        context.user_data['del_item_key'] = item_key
-        keyboard = [
-            [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_item")],
-            [InlineKeyboardButton("No, go back", callback_data="admin_manage_items")]
-        ]
-        await query.message.edit_text(
-            f"Delete item *{item_key}*? You’re one cold bastard.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        return ITEM_DELETE_CONFIRM
-    elif data == "confirm_delete_item":
-        item_key = context.user_data.get('del_item_key')
-        if item_key and item_key in ITEMS:
-            del ITEMS[item_key]
-            for cat, items in CATEGORIES.items():
-                if item_key in items:
-                    items.remove(item_key)
-            save_json(ITEMS_FILE, ITEMS)
-            save_json(CATEGORIES_FILE, CATEGORIES)
-            await query.message.edit_text(f"Item *{item_key}* deleted, you savage.")
+        elif data == "admin_exit":
+            await query.message.edit_text("Exiting admin mode, you cruel bastard.")
+            return ConversationHandler.END
+        elif data == "admin_back_to_menu":
+            return await admin_start(update, context)
+        elif data == "add_category":
+            await query.message.edit_text("Send me the *name* of the new category (lowercase, no spaces).", parse_mode="Markdown")
+            return CATEGORY_ADD_NAME
+        elif data.startswith("edit_cat_"):
+            cat_key = data[len("edit_cat_"):]
+            if cat_key not in CATEGORIES:
+                await query.message.edit_text("Category not found, you blind fuck.")
+                logging.error(f"User {user_id} tried to edit non-existent category: {cat_key}")
+                return await admin_show_categories(update, context)
+            context.user_data['edit_cat_key'] = cat_key
+            await query.message.edit_text(
+                f"Editing category *{cat_key}*\nSend new name (lowercase, no spaces), or /cancel.",
+                parse_mode="Markdown"
+            )
+            return CATEGORY_EDIT_NAME
+        elif data.startswith("delete_cat_"):
+            cat_key = data[len("delete_cat_"):]
+            if cat_key not in CATEGORIES:
+                await query.message.edit_text("Category not found, you blind fuck.")
+                logging.error(f"User {user_id} tried to delete non-existent category: {cat_key}")
+                return await admin_show_categories(update, context)
+            context.user_data['del_cat_key'] = cat_key
+            keyboard = [
+                [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_cat")],
+                [InlineKeyboardButton("No, go back", callback_data="admin_manage_categories")]
+            ]
+            await query.message.edit_text(
+                f"Delete category *{cat_key}*? Items will be orphaned, you heartless fuck.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            return CATEGORY_DELETE_CONFIRM
+        elif data == "confirm_delete_cat":
+            cat_key = context.user_data.get('del_cat_key')
+            if cat_key and cat_key in CATEGORIES:
+                del CATEGORIES[cat_key]
+                save_json(CATEGORIES_FILE, CATEGORIES)
+                await query.message.edit_text(f"Category *{cat_key}* deleted, you ruthless prick.")
+                logging.info(f"User {user_id} deleted category: {cat_key}")
+            else:
+                await query.message.edit_text("No category selected, dumbass.")
+                logging.error(f"User {user_id} tried to delete non-existent category")
+            return await admin_show_categories(update, context)
+        elif data == "add_item":
+            await query.message.edit_text("Send new item *key* (unique id, no spaces).", parse_mode="Markdown")
+            return ITEM_ADD_KEY
+        elif data.startswith("edit_item_"):
+            item_key = data[len("edit_item_"):]
+            if item_key not in ITEMS:
+                await query.message.edit_text("Item not found, you blind fuck.")
+                logging.error(f"User {user_id} tried to edit non-existent item: {item_key}")
+                return await admin_show_items(update, context)
+            context.user_data['edit_item_key'] = item_key
+            return await admin_edit_item_menu(update, context, item_key)
+        elif data.startswith("delete_item_"):
+            item_key = data[len("delete_item_"):]
+            if item_key not in ITEMS:
+                await query.message.edit_text("Item not found, you blind fuck.")
+                logging.error(f"User {user_id} tried to delete non-existent item: {item_key}")
+                return await admin_show_items(update, context)
+            context.user_data['del_item_key'] = item_key
+            keyboard = [
+                [InlineKeyboardButton("Yes, delete it", callback_data="confirm_delete_item")],
+                [InlineKeyboardButton("No, go back", callback_data="admin_manage_items")]
+            ]
+            await query.message.edit_text(
+                f"Delete item *{item_key}*? You’re one cold bastard.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            return ITEM_DELETE_CONFIRM
+        elif data == "confirm_delete_item":
+            item_key = context.user_data.get('del_item_key')
+            if item_key and item_key in ITEMS:
+                del ITEMS[item_key]
+                for cat, items in CATEGORIES.items():
+                    if item_key in items:
+                        items.remove(item_key)
+                save_json(ITEMS_FILE, ITEMS)
+                save_json(CATEGORIES_FILE, CATEGORIES)
+                await query.message.edit_text(f"Item *{item_key}* deleted, you savage.")
+                logging.info(f"User {user_id} deleted item: {item_key}")
+            else:
+                await query.message.edit_text("No item selected, you moron.")
+                logging.error(f"User {user_id} tried to delete non-existent item")
+            return await admin_show_items(update, context)
+        elif data.startswith("edit_field_"):
+            field = data[len("edit_field_"):]
+            context.user_data['edit_item_field'] = field
+            await query.message.edit_text(f"Send new value for *{field}*, or /cancel.", parse_mode="Markdown")
+            return ITEM_EDIT_FIELD_VALUE
+        elif data == "back_to_categories":
+            return await admin_show_categories(update, context)
+        elif data == "back_to_items":
+            return await admin_show_items(update, context)
+        elif data == "back_to_admin":
+            return await admin_start(update, context)
         else:
-            await query.message.edit_text("No item selected, you moron.")
-        return await admin_show_items(update, context)
-    elif data.startswith("edit_field_"):
-        field = data[len("edit_field_"):]
-        context.user_data['edit_item_field'] = field
-        await query.message.edit_text(f"Send new value for *{field}*, or /cancel.", parse_mode="Markdown")
-        return ITEM_EDIT_FIELD_VALUE
-    elif data == "back_to_categories":
-        return await admin_show_categories(update, context)
-    elif data == "back_to_items":
-        return await admin_show_items(update, context)
-    elif data == "back_to_admin":
-        return await admin_start(update, context)
-    return ADMIN_MENU
+            await query.message.edit_text("Invalid callback, you dumb fuck. Try again.")
+            logging.warning(f"Unhandled callback data: {data} by user {user_id}")
+            return ADMIN_MENU
+    except Exception as e:
+        await query.message.edit_text("Admin panel’s fucked: Try again or I’ll make you regret it.")
+        logging.error(f"Admin callback error for user {user_id}: {e}")
+        return ADMIN_MENU
 
 async def admin_show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -684,14 +710,23 @@ async def debug_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Network test failed: {e}")
             logging.error(f"Network test failed for user {user_id}: {e}")
 
+async def debug_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(update):
+        await update.message.reply_text("You’re not admin, you pathetic worm. Get lost.")
+        logging.warning(f"Non-admin user {user_id} attempted /debug_admin")
+        return
+    await update.message.reply_text(f"Admin debug: User ID = {user_id}, Admin ID = {ADMIN_USER_ID}, Categories = {list(CATEGORIES.keys())}, Items = {list(ITEMS.keys())}")
+    logging.info(f"Admin debug by user {user_id}")
+
 def main():
     sync_categories_items()
     if not BLOCKONOMICS_API_KEY:
         logging.error("BLOCKONOMICS_API_KEY not set. Bot will fail.")
         raise ValueError("BLOCKONOMICS_API_KEY not set, you dumb fuck.")
     if os.environ.get("RENDER") and not RENDER_EXTERNAL_HOSTNAME:
-        logging.error("RENDER_EXTERNAL_HOSTNAME not set. Webhook will fail.")
-        raise ValueError("RENDER_EXTERNAL_HOSTNAME not set, you careless fuck.")
+        logging.error("RENDER_EXTERNAL_HOSTNAME not set. Polling will be used.")
+        # Skip webhook setup if hostname is missing
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -699,6 +734,7 @@ def main():
     app.add_handler(CommandHandler("confirm", confirm_payment))
     app.add_handler(CommandHandler("debug_blockonomics", debug_blockonomics))
     app.add_handler(CommandHandler("debug_network", debug_network))
+    app.add_handler(CommandHandler("debug_admin", debug_admin))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     admin_conv = ConversationHandler(
@@ -726,42 +762,25 @@ def main():
     )
     app.add_handler(admin_conv)
 
-    # Create initial event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     try:
-        if os.environ.get("RENDER"):
-            port = int(os.environ.get("PORT", 5000))
-            webhook_url = f"https://{RENDER_EXTERNAL_HOSTNAME}/{TELEGRAM_TOKEN}"
-            try:
-                loop.run_until_complete(
-                    app.run_webhook(
-                        listen="0.0.0.0",
-                        port=port,
-                        url_path=TELEGRAM_TOKEN,
-                        webhook_url=webhook_url,
-                    )
-                )
-                logging.info(f"Webhook started on {webhook_url}")
-            except Exception as e:
-                logging.error(f"Webhook setup failed: {e}")
-                # Create new loop for polling
-                loop.close()
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                logging.info("Starting polling after webhook failure")
-                loop.run_until_complete(
-                    app.run_polling(poll_interval=1.0, timeout=10)
-                )
-                logging.info("Started polling")
-        else:
-            loop.run_until_complete(
-                app.run_polling(poll_interval=1.0, timeout=10)
-            )
-            logging.info("Started polling")
+        # Default to polling to avoid webhook issues
+        logging.info("Starting bot in polling mode")
+        loop.run_until_complete(
+            app.run_polling(poll_interval=1.0, timeout=10)
+        )
+        logging.info("Started polling")
     except Exception as e:
         logging.error(f"Main loop failed: {e}")
+        import random
+        taunts = [
+            "Bot crashed, you incompetent fuck. Check the logs and try again.",
+            "Startup’s fucked, scum. Fix your shit or I’ll dox your ass.",
+            "Event loop’s dead, you pathetic worm. Get it together."
+        ]
+        logging.error(random.choice(taunts))
     finally:
         if not loop.is_closed():
             try:
