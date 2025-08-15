@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 from telegram.error import TelegramError
 from dotenv import load_dotenv
+import random
 
 # Setup logging
 logging.basicConfig(filename='darkbot.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -234,7 +235,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         btc_address = await fetch_btc_address(user_id)
         if not btc_address:
-            import random
             taunts = [
                 "Can’t get BTC address, system’s fucked. Try later, scum.",
                 "Blockonomics hates your broke ass. Come back when you’re worth something.",
@@ -315,8 +315,14 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    logging.debug(f"Attempting /admin for user {user_id}")
     if not is_admin(update):
-        await update.message.reply_text("You’re not admin, you pathetic worm. Get lost.")
+        taunts = [
+            "You’re not admin, you pathetic worm. Get lost.",
+            "Wrong ID, scum. Try hacking your way in and I’ll dox you.",
+            "Admin access denied, you useless fuck. Crawl away."
+        ]
+        await update.message.reply_text(random.choice(taunts))
         logging.warning(f"Non-admin user {user_id} attempted /admin")
         return ConversationHandler.END
 
@@ -449,7 +455,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logging.warning(f"Unhandled callback data: {data} by user {user_id}")
             return ADMIN_MENU
     except Exception as e:
-        await query.message.edit_text("Admin panel’s fucked: Try again or I’ll make you regret it.")
+        taunts = [
+            "Admin panel’s fucked: Try again or I’ll make you regret it.",
+            "You broke the admin panel, you clumsy fuck. Fix your shit.",
+            "Admin mode’s down, scum. Keep trying and I’ll expose your incompetence."
+        ]
+        await query.message.edit_text(random.choice(taunts))
         logging.error(f"Admin callback error for user {user_id}: {e}")
         return ADMIN_MENU
 
@@ -726,7 +737,6 @@ def main():
         raise ValueError("BLOCKONOMICS_API_KEY not set, you dumb fuck.")
     if os.environ.get("RENDER") and not RENDER_EXTERNAL_HOSTNAME:
         logging.error("RENDER_EXTERNAL_HOSTNAME not set. Polling will be used.")
-        # Skip webhook setup if hostname is missing
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -757,8 +767,8 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
-        conversation_timeout=600,
-        per_message=True
+        conversation_timeout=600
+        # Removed per_message=True
     )
     app.add_handler(admin_conv)
 
@@ -766,20 +776,18 @@ def main():
     asyncio.set_event_loop(loop)
 
     try:
-        # Default to polling to avoid webhook issues
         logging.info("Starting bot in polling mode")
         loop.run_until_complete(
             app.run_polling(poll_interval=1.0, timeout=10)
         )
         logging.info("Started polling")
     except Exception as e:
-        logging.error(f"Main loop failed: {e}")
-        import random
         taunts = [
             "Bot crashed, you incompetent fuck. Check the logs and try again.",
             "Startup’s fucked, scum. Fix your shit or I’ll dox your ass.",
             "Event loop’s dead, you pathetic worm. Get it together."
         ]
+        logging.error(f"Main loop failed: {e}")
         logging.error(random.choice(taunts))
     finally:
         if not loop.is_closed():
