@@ -673,9 +673,9 @@ def main():
             logging.info(f"Webhook started on {webhook_url}")
         except Exception as e:
             logging.error(f"Webhook setup failed: {e}, falling back to polling")
-            app.run_polling()
+            app.run_polling(poll_interval=1.0, timeout=10)
     else:
-        app.run_polling()
+        app.run_polling(poll_interval=1.0, timeout=10)
         logging.info("Started polling")
 
 if __name__ == "__main__":
