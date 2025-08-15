@@ -14,7 +14,7 @@ from telegram.error import TelegramError
 from dotenv import load_dotenv
 
 # Setup logging
-logging.basicConfig(filename='darkbot.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='darkbot.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 load_dotenv()
 TELEGRAM_TOKEN = "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
@@ -27,6 +27,8 @@ ADMIN_USER_ID = 7260656020  # Your admin Telegram user ID
 
 CATEGORIES_FILE = "categories.json"
 ITEMS_FILE = "items.json"
+
+GLOBAL_BTC_REQUESTS = []
 
 (
     ADMIN_MENU,
@@ -114,33 +116,59 @@ def rate_limit(limit: int, period: int):
     return decorator
 
 # Async HTTP client for Blockonomics
-async def fetch_btc_address():
+async def fetch_btc_address(user_id: int):
+    global GLOBAL_BTC_REQUESTS
+    now = time.time()
+    GLOBAL_BTC_REQUESTS = [t for t in GLOBAL_BTC_REQUESTS if now - t < 60]
+    if len(GLOBAL_BTC_REQUESTS) >= 10:
+        logging.warning(f"Global rate limit hit for user {user_id}")
+        return None
+    GLOBAL_BTC_REQUESTS.append(now)
+
+    if not BLOCKONOMICS_API_KEY:
+        logging.error("BLOCKONOMICS_API_KEY is not set for user %s", user_id)
+        return None
     async with aiohttp.ClientSession() as session:
-        headers = {'Authorization': BLOCKONOMICS_API_KEY}
-        for _ in range(3):  # Retry 3 times
+        headers = {'Authorization': f'Bearer {BLOCKONOMICS_API_KEY}'}
+        for attempt in range(3):  # Retry 3 times
             try:
-                async with session.post('https://www.blockonomics.co/api/new_address', headers=headers) as resp:
+                async with session.post('https://www.blockonomics.co/api/new_address', headers=headers, timeout=15) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
-                    return data.get('address')
+                    logging.debug(f"Blockonomics response for user {user_id}: {data}")
+                    address = data.get('address')
+                    if not address:
+                        logging.error(f"No address in response for user {user_id}: {data}")
+                        return None
+                    return address
+            except aiohttp.ClientResponseError as e:
+                logging.error(f"HTTP error for user {user_id} on attempt {attempt + 1}: {e.status} - {e.message}")
+            except aiohttp.ClientConnectionError as e:
+                logging.error(f"Connection error for user {user_id} on attempt {attempt + 1}: {e}")
+            except aiohttp.ClientError as e:
+                logging.error(f"Client error for user {user_id} on attempt {attempt + 1}: {e}")
             except Exception as e:
-                logging.error(f"BTC address fetch failed: {e}")
-                await asyncio.sleep(2)
+                logging.error(f"Unexpected error for user {user_id} on attempt {attempt + 1}: {e}")
+            await asyncio.sleep(2)
+        logging.error(f"Failed to fetch BTC address for user {user_id} after 3 attempts")
         return None
 
-async def check_btc_balance(address: str, amount: float):
+async def check_btc_balance(address: str, amount: float, user_id: int):
     async with aiohttp.ClientSession() as session:
-        headers = {'Authorization': BLOCKONOMICS_API_KEY}
+        headers = {'Authorization': f'Bearer {BLOCKONOMICS_API_KEY}'}
         try:
-            async with session.post('https://www.blockonomics.co/api/balance', json={'addr': [address]}, headers=headers) as resp:
+            async with session.post('https://www.blockonomics.co/api/balance', json={'addr': [address]}, headers=headers, timeout=15) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
                 balance_data = data.get('data', [])
                 if not balance_data:
+                    logging.warning(f"No balance data for address {address} for user {user_id}")
                     return 0
-                return balance_data[0].get('confirmed', 0) / 1e8
+                balance = balance_data[0].get('confirmed', 0) / 1e8
+                logging.debug(f"Balance for address {address} for user {user_id}: {balance} BTC")
+                return balance
         except Exception as e:
-            logging.error(f"BTC balance check failed: {e}")
+            logging.error(f"BTC balance check failed for user {user_id}: {e}")
             return 0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,9 +225,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.warning(f"User {user_id} selected invalid item: {item_key}")
             return
 
-        btc_address = await fetch_btc_address()
+        # Rate limit BTC address requests (10 per minute)
+        last_request = context.user_data.get('last_btc_request', 0)
+        if time.time() - last_request < 6:
+            await query.message.reply_text("Slow down, you greedy fuck. Wait a minute before begging for another address.")
+            logging.warning(f"User {user_id} hit BTC address rate limit")
+            return
+        context.user_data['last_btc_request'] = time.time()
+
+        btc_address = await fetch_btc_address(user_id)
         if not btc_address:
-            await query.message.reply_text("Can’t get BTC address, system’s fucked. Try later, scum.")
+            import random
+            taunts = [
+                "Can’t get BTC address, system’s fucked. Try later, scum.",
+                "Blockonomics hates your broke ass. Come back when you’re worth something.",
+                "API’s down, you pathetic worm. Crawl back later or I’ll dox you."
+            ]
+            await query.message.reply_text(random.choice(taunts))
             logging.error(f"Failed to fetch BTC address for user {user_id}")
             return
 
@@ -219,7 +261,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async def check_payment():
             timeout = 3600  # 1 hour
             while time.time() - context.user_data['pending_payment']['start_time'] < timeout:
-                received_btc = await check_btc_balance(btc_address, item['price_btc'])
+                received_btc = await check_btc_balance(btc_address, item['price_btc'], user_id)
                 if received_btc >= item['price_btc']:
                     try:
                         with open(item['file_path'], 'rb') as file:
@@ -250,7 +292,7 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"User {user_id} tried /confirm with no pending payment")
         return
 
-    received_btc = await check_btc_balance(pending['address'], pending['amount'])
+    received_btc = await check_btc_balance(pending['address'], pending['amount'], user_id)
     if received_btc >= pending['amount']:
         item = ITEMS[pending['item_key']]
         try:
@@ -625,6 +667,23 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
+async def debug_blockonomics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    address = await fetch_btc_address(user_id)
+    await update.message.reply_text(f"Debug: BTC Address = {address if address else 'Failed, you pathetic scum.'}")
+    logging.info(f"Debug Blockonomics for user {user_id}: Address = {address}")
+
+async def debug_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get('https://www.google.com', timeout=10) as resp:
+                await update.message.reply_text(f"Network test: HTTP {resp.status}")
+                logging.info(f"Network test for user {user_id}: HTTP {resp.status}")
+        except Exception as e:
+            await update.message.reply_text(f"Network test failed: {e}")
+            logging.error(f"Network test failed for user {user_id}: {e}")
+
 def main():
     sync_categories_items()
     if not BLOCKONOMICS_API_KEY:
@@ -638,6 +697,8 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("confirm", confirm_payment))
+    app.add_handler(CommandHandler("debug_blockonomics", debug_blockonomics))
+    app.add_handler(CommandHandler("debug_network", debug_network))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     admin_conv = ConversationHandler(
@@ -660,11 +721,12 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
-        conversation_timeout=600  # 10 minutes
+        conversation_timeout=600,
+        per_message=True
     )
     app.add_handler(admin_conv)
 
-    # Create a new event loop to avoid reusing closed loop
+    # Create initial event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -683,20 +745,33 @@ def main():
                 )
                 logging.info(f"Webhook started on {webhook_url}")
             except Exception as e:
-                logging.error(f"Webhook setup failed: {e}, falling back to polling")
+                logging.error(f"Webhook setup failed: {e}")
+                # Create new loop for polling
+                loop.close()
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                logging.info("Starting polling after webhook failure")
                 loop.run_until_complete(
                     app.run_polling(poll_interval=1.0, timeout=10)
                 )
-                logging.info("Started polling after webhook failure")
+                logging.info("Started polling")
         else:
             loop.run_until_complete(
                 app.run_polling(poll_interval=1.0, timeout=10)
             )
             logging.info("Started polling")
+    except Exception as e:
+        logging.error(f"Main loop failed: {e}")
     finally:
-        loop.run_until_complete(app.shutdown())
-        loop.close()
-        logging.info("Application shutdown complete")
+        if not loop.is_closed():
+            try:
+                loop.run_until_complete(app.shutdown())
+                logging.info("Application shutdown complete")
+            except Exception as e:
+                logging.error(f"Shutdown failed: {e}")
+            finally:
+                loop.close()
+                logging.info("Event loop closed")
 
 if __name__ == "__main__":
     main()
