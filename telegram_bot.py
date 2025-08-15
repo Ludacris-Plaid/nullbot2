@@ -19,6 +19,7 @@ logging.basicConfig(filename='darkbot.log', level=logging.INFO, format='%(asctim
 load_dotenv()
 TELEGRAM_TOKEN = "8306200181:AAHP56BkD6eZOcqjI6MZNrMdU7M06S0tIrs"
 BLOCKONOMICS_API_KEY = os.getenv("BLOCKONOMICS_API_KEY")
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
 VIDEO_URL = "https://ik.imagekit.io/myrnjevjk/game%20over.mp4?updatedAt=1754980438031"
 
@@ -629,6 +630,9 @@ def main():
     if not BLOCKONOMICS_API_KEY:
         logging.error("BLOCKONOMICS_API_KEY not set. Bot will fail.")
         raise ValueError("BLOCKONOMICS_API_KEY not set, you dumb fuck.")
+    if os.environ.get("RENDER") and not RENDER_EXTERNAL_HOSTNAME:
+        logging.error("RENDER_EXTERNAL_HOSTNAME not set. Webhook will fail.")
+        raise ValueError("RENDER_EXTERNAL_HOSTNAME not set, you careless fuck.")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -660,23 +664,39 @@ def main():
     )
     app.add_handler(admin_conv)
 
-    if os.environ.get("RENDER"):
-        try:
+    # Create a new event loop to avoid reusing closed loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        if os.environ.get("RENDER"):
             port = int(os.environ.get("PORT", 5000))
-            webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/{TELEGRAM_TOKEN}"
-            app.run_webhook(
-                listen="0.0.0.0",
-                port=port,
-                url_path=TELEGRAM_TOKEN,
-                webhook_url=webhook_url,
+            webhook_url = f"https://{RENDER_EXTERNAL_HOSTNAME}/{TELEGRAM_TOKEN}"
+            try:
+                loop.run_until_complete(
+                    app.run_webhook(
+                        listen="0.0.0.0",
+                        port=port,
+                        url_path=TELEGRAM_TOKEN,
+                        webhook_url=webhook_url,
+                    )
+                )
+                logging.info(f"Webhook started on {webhook_url}")
+            except Exception as e:
+                logging.error(f"Webhook setup failed: {e}, falling back to polling")
+                loop.run_until_complete(
+                    app.run_polling(poll_interval=1.0, timeout=10)
+                )
+                logging.info("Started polling after webhook failure")
+        else:
+            loop.run_until_complete(
+                app.run_polling(poll_interval=1.0, timeout=10)
             )
-            logging.info(f"Webhook started on {webhook_url}")
-        except Exception as e:
-            logging.error(f"Webhook setup failed: {e}, falling back to polling")
-            app.run_polling(poll_interval=1.0, timeout=10)
-    else:
-        app.run_polling(poll_interval=1.0, timeout=10)
-        logging.info("Started polling")
+            logging.info("Started polling")
+    finally:
+        loop.run_until_complete(app.shutdown())
+        loop.close()
+        logging.info("Application shutdown complete")
 
 if __name__ == "__main__":
     main()
